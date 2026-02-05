@@ -33,9 +33,9 @@ fi
 # transcript への書き込み完了を待つ
 sleep 0.3
 
-# transcript から直近の assistant テキストを抽出
+# transcript から直近の assistant テキストを抽出（user メッセージは除外）
 response=$(tail -r "$transcript_path" 2>/dev/null | \
-    grep -E '^\{.*"type":"text"' | head -1 | \
+    grep -E '^\{.*"role":"assistant"' | head -1 | \
     jq -r '[.message.content[]? | select(.type == "text")] | .[0].text // empty' 2>/dev/null || true)
 
 echo "response length: ${#response}" >> "$DEBUG"

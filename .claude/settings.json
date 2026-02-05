@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/stop-voicevox-speak.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
