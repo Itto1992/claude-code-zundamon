@@ -1,0 +1,12 @@
+services:
+  voicevox:
+    image: voicevox/voicevox_engine:cpu-latest
+    ports:
+      - "127.0.0.1:50021:50021"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:50021/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

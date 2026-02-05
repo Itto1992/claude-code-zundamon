@@ -1,0 +1,170 @@
+#!/bin/bash
+#
+# VOICEVOX を使ってテキストを読み上げる
+#
+# 使用例:
+#   voicevox-say "こんにちは"
+#   voicevox-say "四国めたんです" -s 2
+#   echo "パイプからの入力" | voicevox-say
+#   voicevox-say -s 3 --speed 1.2 "早口で話します"
+#
+
+set -euo pipefail
+
+# デフォルト値
+VOICEVOX_URL="${VOICEVOX_URL:-http://localhost:50021}"
+DEFAULT_SPEAKER=3  # ずんだもん（ノーマル）
+SPEED_SCALE=1.0
+OUTPUT_FILE=""
+
+usage() {
+    cat << EOF
+使用法: voicevox-say [オプション] [テキスト]
+
+テキストを VOICEVOX で読み上げる。テキストが指定されない場合は標準入力から読み取る。
+
+オプション:
+    -s, --speaker ID    スピーカーID (デフォルト: $DEFAULT_SPEAKER)
+    --speed SCALE       話速 (デフォルト: $SPEED_SCALE)
+    -o, --output FILE   ファイルに保存（再生しない）
+    -l, --list          スピーカー一覧を表示
+    -h, --help          このヘルプを表示
+
+主なスピーカーID:
+    0  四国めたん（あまあま）
+    2  四国めたん（ノーマル）
+    3  ずんだもん（ノーマル）
+    1  ずんだもん（あまあま）
+    8  春日部つむぎ（ノーマル）
+
+環境変数:
+    VOICEVOX_URL    VOICEVOX エンジンの URL (デフォルト: http://localhost:50021)
+EOF
+}
+
+list_speakers() {
+    curl -s "${VOICEVOX_URL}/speakers" | \
+        jq -r '.[] | .name as $name | .styles[] | "  \(.id|tostring|(" " * (3 - length)) + .)  \($name)（\(.name)）"'
+}
+
+check_dependencies() {
+    local missing=()
+
+    if ! command -v curl &> /dev/null; then
+        missing+=("curl")
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        missing+=("jq")
+    fi
+
+    if [[ -z "$OUTPUT_FILE" ]] && ! command -v play &> /dev/null; then
+        echo "エラー: 'play' コマンドが見つかりません。SoX をインストールしてください:" >&2
+        echo "  brew install sox" >&2
+        exit 1
+    fi
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "エラー: 以下のコマンドが必要です: ${missing[*]}" >&2
+        exit 1
+    fi
+}
+
+check_voicevox() {
+    if ! curl -s --max-time 3 "${VOICEVOX_URL}/version" > /dev/null 2>&1; then
+        echo "エラー: VOICEVOX エンジンに接続できません (${VOICEVOX_URL})" >&2
+        echo "エンジンを起動してください: docker compose up -d" >&2
+        exit 1
+    fi
+}
+
+synthesize() {
+    local text="$1"
+    local speaker="$2"
+    local speed="$3"
+
+    # AudioQuery を取得
+    local query
+    query=$(curl -s -X POST "${VOICEVOX_URL}/audio_query?speaker=${speaker}" \
+        --get --data-urlencode "text=${text}")
+
+    # 話速を調整
+    if [[ "$speed" != "1.0" ]]; then
+        query=$(echo "$query" | jq ".speedScale = ${speed}")
+    fi
+
+    # 音声を合成
+    echo "$query" | curl -s -X POST "${VOICEVOX_URL}/synthesis?speaker=${speaker}" \
+        -H "Content-Type: application/json" \
+        -d @-
+}
+
+main() {
+    local speaker="$DEFAULT_SPEAKER"
+    local speed="$SPEED_SCALE"
+    local text=""
+
+    # 引数のパース
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -s|--speaker)
+                speaker="$2"
+                shift 2
+                ;;
+            --speed)
+                speed="$2"
+                shift 2
+                ;;
+            -o|--output)
+                OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            -l|--list)
+                check_voicevox
+                echo "利用可能なスピーカー:"
+                list_speakers
+                exit 0
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            -*)
+                echo "不明なオプション: $1" >&2
+                usage >&2
+                exit 1
+                ;;
+            *)
+                text="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # 標準入力からテキストを読み取る
+    if [[ -z "$text" ]]; then
+        if [[ -t 0 ]]; then
+            echo "エラー: テキストを指定してください" >&2
+            usage >&2
+            exit 1
+        fi
+        text=$(cat)
+    fi
+
+    if [[ -z "$text" ]]; then
+        echo "エラー: テキストが空です" >&2
+        exit 1
+    fi
+
+    check_dependencies
+    check_voicevox
+
+    if [[ -n "$OUTPUT_FILE" ]]; then
+        synthesize "$text" "$speaker" "$speed" > "$OUTPUT_FILE"
+        echo "保存しました: $OUTPUT_FILE"
+    else
+        synthesize "$text" "$speaker" "$speed" | play -t wav -q -
+    fi
+}
+
+main "$@"
